@@ -131,6 +131,9 @@ int main(int argc, char *argv[]) {
 
     // Print welcome banner
     if (!options.quiet && !options.cat && !options.toPly) {
+        if (sizeof(void *) == 4)
+            printf("*** WARNING: This is a 32-bit build of pbrt. It will crash "
+                   "if used to render highly complex scenes. ***\n");
         printf("pbrt version 3 (built %s at %s) [Detected %d cores]\n",
                __DATE__, __TIME__, NumSystemCores());
 #ifndef NDEBUG
@@ -138,7 +141,7 @@ int main(int argc, char *argv[]) {
         printf("*** DEBUG BUILD ***\n");
 #endif // !NDEBUG
         printf(
-            "Copyright (c)1998-2016 Matt Pharr, Greg Humphreys, and Wenzel "
+            "Copyright (c)1998-2018 Matt Pharr, Greg Humphreys, and Wenzel "
             "Jakob.\n");
         printf(
             "The source code to pbrt (but *not* the book contents) is covered "
@@ -154,8 +157,7 @@ int main(int argc, char *argv[]) {
     } else {
         // Parse scene from input files
         for (const std::string &f : filenames)
-            if (!ParseFile(f))
-                Error("Couldn't open scene file \"%s\"", f.c_str());
+            ParseFile(f);
     }
     pbrtCleanup();
     return 0;

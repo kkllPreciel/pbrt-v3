@@ -55,7 +55,8 @@ TriangleMesh::TriangleMesh(
     const Transform &ObjectToWorld, int nTriangles, const int *vertexIndices,
     int nVertices, const Point3f *P, const Vector3f *S, const Normal3f *N,
     const Point2f *UV, const std::shared_ptr<Texture<Float>> &alphaMask,
-    const std::shared_ptr<Texture<Float>> &shadowAlphaMask)
+    const std::shared_ptr<Texture<Float>> &shadowAlphaMask,
+    const int *fIndices)
     : nTriangles(nTriangles),
       nVertices(nVertices),
       vertexIndices(vertexIndices, vertexIndices + 3 * nTriangles),
@@ -63,9 +64,10 @@ TriangleMesh::TriangleMesh(
       shadowAlphaMask(shadowAlphaMask) {
     ++nMeshes;
     nTris += nTriangles;
-    triMeshBytes += sizeof(*this) + (3 * nTriangles * sizeof(int)) +
+    triMeshBytes += sizeof(*this) + this->vertexIndices.size() * sizeof(int) +
                     nVertices * (sizeof(*P) + (N ? sizeof(*N) : 0) +
-                                 (S ? sizeof(*S) : 0) + (UV ? sizeof(*UV) : 0));
+                                 (S ? sizeof(*S) : 0) + (UV ? sizeof(*UV) : 0) +
+                                 (fIndices ? sizeof(*fIndices) : 0));
 
     // Transform mesh vertices to world space
     p.reset(new Point3f[nVertices]);
@@ -84,6 +86,9 @@ TriangleMesh::TriangleMesh(
         s.reset(new Vector3f[nVertices]);
         for (int i = 0; i < nVertices; ++i) s[i] = ObjectToWorld(S[i]);
     }
+
+    if (fIndices)
+        faceIndices = std::vector<int>(fIndices, fIndices + nTriangles);
 }
 
 std::vector<std::shared_ptr<Shape>> CreateTriangleMesh(
@@ -91,10 +96,11 @@ std::vector<std::shared_ptr<Shape>> CreateTriangleMesh(
     bool reverseOrientation, int nTriangles, const int *vertexIndices,
     int nVertices, const Point3f *p, const Vector3f *s, const Normal3f *n,
     const Point2f *uv, const std::shared_ptr<Texture<Float>> &alphaMask,
-    const std::shared_ptr<Texture<Float>> &shadowAlphaMask) {
+    const std::shared_ptr<Texture<Float>> &shadowAlphaMask,
+    const int *faceIndices) {
     std::shared_ptr<TriangleMesh> mesh = std::make_shared<TriangleMesh>(
         *ObjectToWorld, nTriangles, vertexIndices, nVertices, p, s, n, uv,
-        alphaMask, shadowAlphaMask);
+        alphaMask, shadowAlphaMask, faceIndices);
     std::vector<std::shared_ptr<Shape>> tris;
     tris.reserve(nTriangles);
     for (int i = 0; i < nTriangles; ++i)
@@ -105,56 +111,61 @@ std::vector<std::shared_ptr<Shape>> CreateTriangleMesh(
 
 bool WritePlyFile(const std::string &filename, int nTriangles,
                   const int *vertexIndices, int nVertices, const Point3f *P,
-                  const Vector3f *S, const Normal3f *N, const Point2f *UV) {
+                  const Vector3f *S, const Normal3f *N, const Point2f *UV,
+                  const int *faceIndices) {
     p_ply plyFile =
         ply_create(filename.c_str(), PLY_DEFAULT, PlyErrorCallback, 0, nullptr);
-    if (plyFile != nullptr) {
-        ply_add_element(plyFile, "vertex", nVertices);
-        ply_add_scalar_property(plyFile, "x", PLY_FLOAT);
-        ply_add_scalar_property(plyFile, "y", PLY_FLOAT);
-        ply_add_scalar_property(plyFile, "z", PLY_FLOAT);
-        if (N != nullptr) {
-            ply_add_scalar_property(plyFile, "nx", PLY_FLOAT);
-            ply_add_scalar_property(plyFile, "ny", PLY_FLOAT);
-            ply_add_scalar_property(plyFile, "nz", PLY_FLOAT);
-        }
-        if (UV != nullptr) {
-            ply_add_scalar_property(plyFile, "u", PLY_FLOAT);
-            ply_add_scalar_property(plyFile, "v", PLY_FLOAT);
-        }
-        if (S != nullptr)
-            Warning("PLY mesh in \"%s\" will be missing tangent vectors \"S\".",
-                    filename.c_str());
+    if (plyFile == nullptr)
+        return false;
 
-        ply_add_element(plyFile, "face", nTriangles);
-        ply_add_list_property(plyFile, "vertex_indices", PLY_UINT8, PLY_INT);
-        ply_write_header(plyFile);
-
-        for (int i = 0; i < nVertices; ++i) {
-            ply_write(plyFile, P[i].x);
-            ply_write(plyFile, P[i].y);
-            ply_write(plyFile, P[i].z);
-            if (N) {
-                ply_write(plyFile, N[i].x);
-                ply_write(plyFile, N[i].y);
-                ply_write(plyFile, N[i].z);
-            }
-            if (UV) {
-                ply_write(plyFile, UV[i].x);
-                ply_write(plyFile, UV[i].y);
-            }
-        }
-
-        for (int i = 0; i < nTriangles; ++i) {
-            ply_write(plyFile, 3);
-            ply_write(plyFile, vertexIndices[3 * i]);
-            ply_write(plyFile, vertexIndices[3 * i + 1]);
-            ply_write(plyFile, vertexIndices[3 * i + 2]);
-        }
-        ply_close(plyFile);
-        return true;
+    ply_add_element(plyFile, "vertex", nVertices);
+    ply_add_scalar_property(plyFile, "x", PLY_FLOAT);
+    ply_add_scalar_property(plyFile, "y", PLY_FLOAT);
+    ply_add_scalar_property(plyFile, "z", PLY_FLOAT);
+    if (N) {
+        ply_add_scalar_property(plyFile, "nx", PLY_FLOAT);
+        ply_add_scalar_property(plyFile, "ny", PLY_FLOAT);
+        ply_add_scalar_property(plyFile, "nz", PLY_FLOAT);
     }
-    return false;
+    if (UV) {
+        ply_add_scalar_property(plyFile, "u", PLY_FLOAT);
+        ply_add_scalar_property(plyFile, "v", PLY_FLOAT);
+    }
+    if (S)
+        Warning("%s: PLY mesh will be missing tangent vectors \"S\".",
+                filename.c_str());
+
+    ply_add_element(plyFile, "face", nTriangles);
+    ply_add_list_property(plyFile, "vertex_indices", PLY_UINT8, PLY_INT);
+    if (faceIndices)
+        ply_add_scalar_property(plyFile, "face_indices", PLY_INT);
+    ply_write_header(plyFile);
+
+    for (int i = 0; i < nVertices; ++i) {
+        ply_write(plyFile, P[i].x);
+        ply_write(plyFile, P[i].y);
+        ply_write(plyFile, P[i].z);
+        if (N) {
+            ply_write(plyFile, N[i].x);
+            ply_write(plyFile, N[i].y);
+            ply_write(plyFile, N[i].z);
+        }
+        if (UV) {
+            ply_write(plyFile, UV[i].x);
+            ply_write(plyFile, UV[i].y);
+        }
+    }
+
+    for (int i = 0; i < nTriangles; ++i) {
+        ply_write(plyFile, 3);
+        ply_write(plyFile, vertexIndices[3 * i]);
+        ply_write(plyFile, vertexIndices[3 * i + 1]);
+        ply_write(plyFile, vertexIndices[3 * i + 2]);
+        if (faceIndices)
+            ply_write(plyFile, faceIndices[i]);
+    }
+    ply_close(plyFile);
+    return true;
 }
 
 Bounds3f Triangle::ObjectBound() const {
@@ -322,7 +333,7 @@ bool Triangle::Intersect(const Ray &ray, Float *tHit, SurfaceInteraction *isect,
     // Fill in _SurfaceInteraction_ from triangle hit
     *isect = SurfaceInteraction(pHit, pError, uvHit, -ray.d, dpdu, dpdv,
                                 Normal3f(0, 0, 0), Normal3f(0, 0, 0), ray.time,
-                                this);
+                                this, faceIndex);
 
     // Override surface normal in _isect_ for triangle
     isect->n = isect->shading.n = Normal3f(Normalize(Cross(dp02, dp12)));
@@ -667,6 +678,14 @@ std::vector<std::shared_ptr<Shape>> CreateTriangleMeshShape(
             return std::vector<std::shared_ptr<Shape>>();
         }
 
+    int nfi;
+    const int *faceIndices = params.FindInt("faceIndices", &nfi);
+    if (faceIndices && nfi != nvi / 3) {
+        Error("Number of face indices, %d, doesn't match number of faces, %d",
+              nfi, nvi / 3);
+        faceIndices = nullptr;
+    }
+
     std::shared_ptr<Texture<Float>> alphaTex;
     std::string alphaTexName = params.FindTexture("alpha");
     if (alphaTexName != "") {
@@ -692,7 +711,7 @@ std::vector<std::shared_ptr<Shape>> CreateTriangleMeshShape(
         shadowAlphaTex.reset(new ConstantTexture<Float>(0.f));
 
     return CreateTriangleMesh(o2w, w2o, reverseOrientation, nvi / 3, vi, npi, P,
-                              S, N, uvs, alphaTex, shadowAlphaTex);
+                              S, N, uvs, alphaTex, shadowAlphaTex, faceIndices);
 }
 
 }  // namespace pbrt
